@@ -157,12 +157,17 @@ test("an unreadable upload directory cannot become a successful empty backup", a
   assert.equal((await runBackup(NOW)).uploaded, true);
   const shipped = objects.size;
   const [last] = await sql`SELECT value FROM settings WHERE key = 'backup.last'`;
-  await symlink("uploads", path.join(config.dataDir, "uploads")); // ELOOP, without depending on root/permission behavior
-  await assert.rejects(runBackup(new Date("2026-11-01T04:01:00Z")), /ELOOP/);
+  // ELOOP needs working symlinks: on Windows a plain file fails the same is-a-directory check.
+  if (process.platform === "win32") await writeFile(path.join(config.dataDir, "uploads"), "");
+  else await symlink("uploads", path.join(config.dataDir, "uploads")); // ELOOP, without depending on root/permission behavior
+  await assert.rejects(runBackup(new Date("2026-11-01T04:01:00Z")), process.platform === "win32" ? /not a directory/ : /ELOOP/);
   assert.equal(objects.size, shipped, "do not send an empty archive as a replacement for unreadable files");
   const [after] = await sql`SELECT value FROM settings WHERE key = 'backup.last'`;
   assert.deepEqual(after, last, "last successful backup remains accurate");
 });
+
+// The fake tar is a POSIX shell script found through PATH; Windows cannot stand one in for tar the same way.
+const noFakeTar = process.platform === "win32" ? "a POSIX shell script cannot stand in for tar on Windows" : false;
 
 async function withPackingFailures(failures: number, action: (count: () => Promise<number>) => Promise<void>) {
   const bin = path.join(config.dataDir, "test-bin");
@@ -188,7 +193,7 @@ exec "$BACKUP_TEST_TAR" "$@"
   }
 }
 
-test("packing retries once and a successful retry preserves the screenshot", async () => {
+test("packing retries once and a successful retry preserves the screenshot", { skip: noFakeTar }, async () => {
   await save("feedback-screenshots/retry.png");
   await withPackingFailures(1, async count => {
     assert.equal((await runBackup(NOW)).uploaded, true);
@@ -198,7 +203,7 @@ test("packing retries once and a successful retry preserves the screenshot", asy
   assert.deepEqual(await readFile(path.join(data, "feedback-screenshots/retry.png")), PNG);
 });
 
-test("persistent packing failure still sends the database and reports incomplete backup", async () => {
+test("persistent packing failure still sends the database and reports incomplete backup", { skip: noFakeTar }, async () => {
   await save("feedback-screenshots/failure.png");
   await withPackingFailures(2, async count => {
     await assert.rejects(runBackup(NOW), /database backed up, but the file archive failed: fictional packing failure/);

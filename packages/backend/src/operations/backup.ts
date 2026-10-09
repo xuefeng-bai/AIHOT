@@ -4,7 +4,7 @@
 import { execFile } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { config, credential } from "../config.ts";
@@ -101,8 +101,13 @@ export async function runBackup(now = new Date()) {
     kept.push(d);
   }
   let filesError: string | null = null;
-  if (!kept.length) await run("tar", ["-czf", files, "-T", "/dev/null"]);
-  else {
+  if (!kept.length) {
+    // /dev/null is a POSIX device: an empty list file makes the same empty archive everywhere.
+    const list = path.join(dir, `${name}-${stamp}.empty`);
+    await writeFile(list, "");
+    try { await run("tar", ["-czf", files, "-T", list]); }
+    finally { await rm(list, { force: true }); }
+  } else {
     const pack = () => run("tar", ["-czf", files, "-C", config.dataDir, ...kept]);
     await pack().catch(() => pack()).catch((error: unknown) => {
       // tar's own words: the message starts with the whole command line, which can fill the excerpt.
