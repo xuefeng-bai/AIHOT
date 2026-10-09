@@ -283,7 +283,10 @@ test('reader enhancements wait for visible code and update only the picture that
 });
 
 test('deep reading returns to its anchor, including folded dates',async()=>{
-  const context=await safari.newContext({viewport:{width:390,height:844}});
+  // Playwright's WebKit build for Windows crashes the renderer when a scrolled long list is
+  // restored through history back; the CI WebKit does not. What this checks (folds, anchored
+  // return, phone width) is engine-independent, so Windows runs it on Chromium.
+  const context=await (process.platform==='win32'?chrome:safari).newContext({viewport:{width:390,height:844}});
   const page=await context.newPage();
   try{
     await page.goto(origin+'/?tag=long-reading');
