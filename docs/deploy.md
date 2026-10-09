@@ -225,11 +225,21 @@ docker compose logs -f --tail 100 api worker web
 
 ## 不用 Docker
 
-需要 Node.js 24.11 以上和 PostgreSQL 16 或 17，系统用 Linux 或 macOS；Windows 上请在 WSL2 里运行，或者用上面的 Docker 方式。
+需要 Node.js 24.11 以上和 PostgreSQL 16 或 17，Linux、macOS 和 Windows 都能直接跑。Windows 上装好 PostgreSQL 后把它的 `bin` 目录加进 PATH（后面要用 `pg_dump`、`pg_restore` 和 `createdb`）；想用 Docker 或 WSL2 也行。
+
+Linux / macOS：
 
 ```bash
 npm ci
 node scripts/init-env.ts --llm-key <你的模型 API Key>
+createdb myhot
+```
+
+Windows（PowerShell）：
+
+```powershell
+npm ci
+node scripts/init-env.ts --llm-key "<你的模型 API Key>"
 createdb myhot
 ```
 
@@ -252,8 +262,22 @@ NODE_ENV=production node --env-file=.env apps/worker/src/main.ts       # 后台�
 cd apps/web && NODE_ENV=production node --env-file=../../.env server.ts   # 网页，3000 端口
 ```
 
+Windows 上三个进程要开三个 PowerShell 窗口，分别在窗口里：
+
+```powershell
+$env:NODE_ENV="production"
+node --env-file=.env apps/api/src/main.ts          # 接口，3001 端口
+
+$env:NODE_ENV="production"
+node --env-file=.env apps/worker/src/main.ts       # 后台任务
+
+cd apps/web
+$env:NODE_ENV="production"
+node --env-file=../../.env server.ts               # 网页，3000 端口
+```
+
 三个进程都要带 `NODE_ENV=production`。api 和 worker 不带它就按开发环境运行：启动时不检查生产密钥和管理员密码，`DEV_AUTH_ROLE` 免登录也会生效。
 
-三个进程要一直运行，生产环境用 systemd 或 pm2 守护（守护配置里同样设 `NODE_ENV=production`）。停止 worker 时至少给它 210 秒（systemd 的 `TimeoutStopSec`、pm2 的 `kill_timeout`），让进行中的付费调用收尾；被提前杀掉的调用结果不明，要等至少半小时自动放行后才会重试。
+三个进程要一直运行，生产环境用 systemd 或 pm2 守护（守护配置里同样设 `NODE_ENV=production`）。停止 worker 时至少给它 210 秒（systemd 的 `TimeoutStopSec`、pm2 的 `kill_timeout`），让进行中的付费调用收尾；被提前杀掉的调用结果不明，要等至少半小时自动放行后才会重试。Windows 里前台运行时按 Ctrl+C 就是同样的收尾流程，要等进程自己退出。
 
 开发时用带热更新的方式：`npm run dev:api`、`npm run dev:worker`、`npm run dev:web`。开发时想免登录进后台，在 `.env` 里设 `DEV_AUTH_ROLE=admin`（生产环境会拒绝启动）。
