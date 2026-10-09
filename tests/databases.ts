@@ -65,12 +65,21 @@ if (process.env.NODE_TEST_CONTEXT && isMainThread) {
     await import("./standalone.ts");
   } else {
     const copy = `${name}_f${process.pid}_${suffix}`;
-    await onServer((db) => db`CREATE DATABASE ${db(copy)} TEMPLATE ${db(name)}`);
+    await onServer(async (db) => {
+      // Windows reuses a freed process id quickly, so the id of a finished file can come back within
+      // the same run; any copy left under this id is dead with its process and is cleared first.
+      await db`DROP DATABASE IF EXISTS ${db(copy)} WITH (FORCE)`;
+      await db`CREATE DATABASE ${db(copy)} TEMPLATE ${db(name)}`;
+    });
     process.env.DATABASE_URL = urlOf(copy);
   }
   const scratch = mkdtempSync(path.join(tmpdir(), scratchPrefix(process.ppid)));
   for (const dir of ["data", "tmp"]) mkdirSync(path.join(scratch, dir));
   process.env.AIHOT_DATA_DIR = path.join(scratch, "data");
-  process.env.TMPDIR = path.join(scratch, "tmp"); // os.tmpdir(): whatever the file creates goes with it
+  // os.tmpdir(): whatever the file creates goes with it. Windows reads TEMP/TMP, POSIX reads TMPDIR.
+  const temp = path.join(scratch, "tmp");
+  process.env.TMPDIR = temp;
+  process.env.TEMP = temp;
+  process.env.TMP = temp;
   process.on("exit", () => rmSync(scratch, { recursive: true, force: true }));
 }
