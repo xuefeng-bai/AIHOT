@@ -1,0 +1,3 @@
+# Everything stays LF in the working tree on every platform: the code, migrations and tests are
+# read by tools (tar lists, migration sorting, line-based assertions) that do not expect CRLF.
+* text=auto eol=lf
