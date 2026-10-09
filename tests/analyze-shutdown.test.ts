@@ -47,7 +47,7 @@ function worker(queue: string) {
     import { closeDb } from '@aihot/backend/db';
     QUEUES.analyze = process.env.TEST_ANALYZE_QUEUE;
     let stopping = false;
-    process.on('SIGTERM', async () => {
+    const shutdown = async () => {
       if (stopping) return;
       stopping = true;
       shutdownSignal.abort();
@@ -55,7 +55,10 @@ function worker(queue: string) {
       await stopBoss();
       await closeDb();
       process.disconnect();
-    });
+    };
+    process.on('SIGTERM', shutdown);
+    // Windows delivers no signals to a spawned child: the test asks over IPC instead.
+    process.on('message', (message) => { if (message && message.stop) shutdown(); });
     await registerContentJobs(await getBoss());
     process.send({ ready: true });
   `;
@@ -73,6 +76,11 @@ function worker(queue: string) {
     child.once("exit", code => { children.delete(child); code === 0 ? resolve() : reject(new Error(`analysis worker exited ${code}: ${stderr}`)); });
   });
   return { child, ready: ready.promise, stopping: stopping.promise, done };
+}
+/** Windows has no signals: TerminateProcess would skip the graceful shutdown path under test. */
+function requestStop(running: ReturnType<typeof worker>) {
+  if (process.platform === "win32") running.child.send({ stop: true });
+  else running.child.kill("SIGTERM");
 }
 async function until(check: () => Promise<boolean>, label: string) {
   const deadline = Date.now() + 12_000;
@@ -101,7 +109,7 @@ test("SIGTERM during the final paid writing call still commits the complete anal
   const jobId = await boss.send(queue, { articleId }, { singletonKey: articleId });
   const running = worker(queue);
   await Promise.race([Promise.all([running.ready, active.writingAsked!.promise]), running.done.then(() => assert.fail("worker exited before writing"))]);
-  running.child.kill("SIGTERM"); await running.stopping;
+  requestStop(running); await running.stopping;
   active.writingAnswer!.open(); await running.done;
   assert.deepEqual(active.calls.slice().sort(), ["prefilter", "score", "score", "structure", "understand"]);
   assert.equal((await sql`SELECT state FROM pgboss.job WHERE id=${jobId}`)[0]!.state, "completed");
@@ -127,7 +135,7 @@ for (const failScore of [false, true]) test(`SIGTERM during ${failScore ? "faile
   const jobId = await boss.send(queue, { articleId }, { singletonKey: articleId });
   const first = worker(queue);
   await Promise.race([Promise.all([first.ready, active.scoreAsked.promise, active.structureAsked.promise]), first.done.then(() => assert.fail("worker exited before both requests"))]);
-  first.child.kill("SIGTERM"); await first.stopping;
+  requestStop(first); await first.stopping;
   active.scoreAnswer.open();
   await until(async () => !!(await sql`SELECT 1 FROM receipts WHERE subject=${`article:${articleId}@1`} AND purpose='score_article' AND status IN ('received','failed')`)[0], "score receipt");
   assert.equal(first.child.exitCode, null, "the process stays alive while structure owns a paid response");
@@ -143,7 +151,7 @@ for (const failScore of [false, true]) test(`SIGTERM during ${failScore ? "faile
   assert.equal((await sql`SELECT state FROM pgboss.job WHERE id=${jobId}`)[0]!.state, "retry", "pg-boss owns restart recovery");
   const restarted = worker(queue); await restarted.ready;
   await until(async () => (await sql`SELECT state FROM pgboss.job WHERE id=${jobId}`)[0]?.state === "completed", "completed retry");
-  restarted.child.kill("SIGTERM"); await restarted.done;
+  requestStop(restarted); await restarted.done;
   assert.equal(active.calls.filter(s => s === "prefilter").length, 1);
   assert.equal(active.calls.filter(s => s === "structure").length, 1, "the slow structure answer was saved and reused");
   assert.equal(active.calls.filter(s => s === "score").length, failScore ? 3 : 2, "two ordered successful scores, only a rejected request repeats");

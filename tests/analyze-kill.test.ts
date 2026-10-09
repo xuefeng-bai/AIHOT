@@ -88,6 +88,7 @@ async function finish(articleId: string) {
 async function kill(running: ReturnType<typeof worker>) {
   assert.equal(running.child.kill("SIGKILL"), true);
   const result = await running.done;
+  // Windows has no real signals, but Node reports the one the kill used: code stays null, signal is named.
   assert.equal(result.signal, "SIGKILL", result.stderr);
   assert.equal(result.message, undefined, "the process was killed before completing business work");
 }

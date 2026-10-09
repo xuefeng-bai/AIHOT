@@ -23,7 +23,10 @@ function runTranslation() {
     import { translatePending } from '@aihot/backend/editorial/translate';
     import { shutdownSignal } from '@aihot/backend/jobs/queue';
     import { closeDb } from '@aihot/backend/db';
-    process.on('SIGTERM', () => { shutdownSignal.abort(); process.send({ stopped: true }); });
+    const stop = () => { shutdownSignal.abort(); process.send({ stopped: true }); };
+    process.on('SIGTERM', stop);
+    // Windows delivers no signals to a spawned child: the test asks over IPC instead.
+    process.on('message', (message) => { if (message && message.stop) stop(); });
     try { process.send({ result: await translatePending({ limit: 1 }) }); }
     finally { await closeDb(); process.disconnect(); }
   `;
@@ -59,7 +62,9 @@ for (const misaligned of [false, true]) test(`SIGTERM finishes the sent ${misali
   await publishArticle(articleId, { releasedAt: new Date(Date.now() - 60_000) });
   const interrupted = runTranslation();
   await Promise.race([active.asked.promise, interrupted.done.then(() => assert.fail('translation ended before a request'))]);
-  interrupted.child.kill('SIGTERM');
+  // Windows has no signal delivery: ask the child over IPC to take the same path.
+  if (process.platform === "win32") interrupted.child.send({ stop: true });
+  else interrupted.child.kill('SIGTERM');
   await interrupted.stopped;
   active.hold.open();
   assert.deepEqual(await interrupted.done, { done: [], quotes: 0 });
